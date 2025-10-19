@@ -1,11 +1,23 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -26,9 +38,22 @@ import {
   Eye,
   EyeOff,
   Plus,
-  Tag
+  Tag,
+  Edit,
+  Trash2,
+  AlertCircle,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 interface SystemSettings {
   companyName: string;
@@ -58,6 +83,12 @@ interface CategoryForm {
   description: string;
 }
 
+interface Category {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export default function Settings() {
   const { theme, toggleTheme } = useThemeStore();
   const { user, accessToken } = useAuthStore();
@@ -73,13 +104,14 @@ export default function Settings() {
     language: "en",
   });
 
-  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>({
-    emailNotifications: true,
-    lowStockAlerts: true,
-    paymentReminders: true,
-    systemUpdates: true,
-    securityAlerts: true,
-  });
+  const [notificationSettings, setNotificationSettings] =
+    useState<NotificationSettings>({
+      emailNotifications: true,
+      lowStockAlerts: true,
+      paymentReminders: true,
+      systemUpdates: true,
+      securityAlerts: true,
+    });
 
   const [securitySettings, setSecuritySettings] = useState<SecuritySettings>({
     twoFactorAuth: false,
@@ -100,6 +132,11 @@ export default function Settings() {
   });
 
   const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(
+    null,
+  );
+  const [isLoadingCategories, setIsLoadingCategories] = useState(false);
 
   const saveSystemSettings = () => {
     toast({
@@ -123,7 +160,11 @@ export default function Settings() {
   };
 
   const changePassword = () => {
-    if (!passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
+    if (
+      !passwordForm.currentPassword ||
+      !passwordForm.newPassword ||
+      !passwordForm.confirmPassword
+    ) {
       toast({
         title: "Error",
         description: "Please fill in all password fields.",
@@ -163,6 +204,35 @@ export default function Settings() {
     setShowChangePassword(false);
   };
 
+  const fetchCategories = async () => {
+    try {
+      setIsLoadingCategories(true);
+      const response = await fetch("http://localhost:5002/api/categories", {
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch categories");
+      }
+
+      const data = await response.json();
+      if (data.ok && Array.isArray(data.result)) {
+        setCategories(data.result);
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: "Failed to load categories.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingCategories(false);
+    }
+  };
+
   const addCategory = async () => {
     if (!categoryForm.name.trim()) {
       toast({
@@ -175,8 +245,13 @@ export default function Settings() {
 
     setIsAddingCategory(true);
     try {
-      const response = await fetch("http://localhost:5002/api/categories", {
-        method: "POST",
+      const method = editingCategoryId ? "PUT" : "POST";
+      const url = editingCategoryId
+        ? `http://localhost:5002/api/categories/${editingCategoryId}`
+        : "http://localhost:5002/api/categories";
+
+      const response = await fetch(url, {
+        method,
         headers: {
           "Content-Type": "application/json",
           ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
@@ -188,24 +263,26 @@ export default function Settings() {
       });
 
       if (!response.ok) {
-        throw new Error("Failed to add category");
+        throw new Error("Failed to save category");
       }
 
-      const data = await response.json();
-
+      const isUpdate = editingCategoryId;
       toast({
         title: "Success",
-        description: `Category "${categoryForm.name}" has been added successfully.`,
+        description: `Category "${categoryForm.name}" has been ${isUpdate ? "updated" : "added"} successfully.`,
       });
 
       setCategoryForm({
         name: "",
         description: "",
       });
+      setEditingCategoryId(null);
+      fetchCategories();
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to add category. Please try again.",
+        description:
+          error.message || "Failed to save category. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -213,12 +290,69 @@ export default function Settings() {
     }
   };
 
+  const editCategory = (category: Category) => {
+    setCategoryForm({
+      name: category.name,
+      description: category.description || "",
+    });
+    setEditingCategoryId(category.id);
+  };
+
+  const deleteCategory = async (categoryId: string) => {
+    try {
+      const response = await fetch(
+        `http://localhost:5002/api/categories/${categoryId}`,
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
+          },
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to delete category");
+      }
+
+      toast({
+        title: "Success",
+        description: "Category has been deleted successfully.",
+      });
+
+      fetchCategories();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description:
+          error.message || "Failed to delete category. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const cancelEdit = () => {
+    setEditingCategoryId(null);
+    setCategoryForm({
+      name: "",
+      description: "",
+    });
+  };
+
+  useEffect(() => {
+    fetchCategories();
+  }, []);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">{t('settings.title', 'Settings')}</h1>
-          <p className="text-muted-foreground">{t('settings.subtitle', 'Manage your application preferences')}</p>
+          <h1 className="text-3xl font-bold tracking-tight">
+            {t("settings.title", "Settings")}
+          </h1>
+          <p className="text-muted-foreground">
+            {t("settings.subtitle", "Manage your application preferences")}
+          </p>
         </div>
       </div>
 
@@ -238,9 +372,7 @@ export default function Settings() {
                   <Building className="h-5 w-5" />
                   Company Information
                 </CardTitle>
-                <CardDescription>
-                  Basic company details
-                </CardDescription>
+                <CardDescription>Basic company details</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -248,7 +380,12 @@ export default function Settings() {
                   <Input
                     id="companyName"
                     value={systemSettings.companyName}
-                    onChange={(e) => setSystemSettings({...systemSettings, companyName: e.target.value})}
+                    onChange={(e) =>
+                      setSystemSettings({
+                        ...systemSettings,
+                        companyName: e.target.value,
+                      })
+                    }
                   />
                 </div>
                 <div className="space-y-2">
@@ -257,7 +394,12 @@ export default function Settings() {
                     id="companyEmail"
                     type="email"
                     value={systemSettings.companyEmail}
-                    onChange={(e) => setSystemSettings({...systemSettings, companyEmail: e.target.value})}
+                    onChange={(e) =>
+                      setSystemSettings({
+                        ...systemSettings,
+                        companyEmail: e.target.value,
+                      })
+                    }
                   />
                 </div>
                 <div className="space-y-2">
@@ -265,7 +407,12 @@ export default function Settings() {
                   <Input
                     id="companyPhone"
                     value={systemSettings.companyPhone}
-                    onChange={(e) => setSystemSettings({...systemSettings, companyPhone: e.target.value})}
+                    onChange={(e) =>
+                      setSystemSettings({
+                        ...systemSettings,
+                        companyPhone: e.target.value,
+                      })
+                    }
                   />
                 </div>
                 <Button onClick={saveSystemSettings} className="w-full">
@@ -274,15 +421,21 @@ export default function Settings() {
                 </Button>
               </CardContent>
             </Card>
+          </div>
 
+          <div className="space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Tag className="h-5 w-5" />
-                  Add Product Category
+                  {editingCategoryId
+                    ? "Edit Product Category"
+                    : "Add Product Category"}
                 </CardTitle>
                 <CardDescription>
-                  Create a new product category for your inventory
+                  {editingCategoryId
+                    ? "Update category details"
+                    : "Create a new product category for your inventory"}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -292,7 +445,9 @@ export default function Settings() {
                     id="categoryName"
                     placeholder="e.g., Transport, Electronics, Clothing"
                     value={categoryForm.name}
-                    onChange={(e) => setCategoryForm({...categoryForm, name: e.target.value})}
+                    onChange={(e) =>
+                      setCategoryForm({ ...categoryForm, name: e.target.value })
+                    }
                     disabled={isAddingCategory}
                   />
                 </div>
@@ -302,19 +457,127 @@ export default function Settings() {
                     id="categoryDescription"
                     placeholder="e.g., This category is about transports"
                     value={categoryForm.description}
-                    onChange={(e) => setCategoryForm({...categoryForm, description: e.target.value})}
+                    onChange={(e) =>
+                      setCategoryForm({
+                        ...categoryForm,
+                        description: e.target.value,
+                      })
+                    }
                     disabled={isAddingCategory}
                     rows={4}
                   />
                 </div>
-                <Button
-                  onClick={addCategory}
-                  className="w-full"
-                  disabled={isAddingCategory}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  {isAddingCategory ? "Adding Category..." : "Add Category"}
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={addCategory}
+                    className="flex-1"
+                    disabled={isAddingCategory}
+                  >
+                    {editingCategoryId ? (
+                      <>
+                        <Save className="mr-2 h-4 w-4" />
+                        {isAddingCategory ? "Updating..." : "Update Category"}
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="mr-2 h-4 w-4" />
+                        {isAddingCategory ? "Adding..." : "Add Category"}
+                      </>
+                    )}
+                  </Button>
+                  {editingCategoryId && (
+                    <Button
+                      onClick={cancelEdit}
+                      variant="outline"
+                      disabled={isAddingCategory}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Manage Categories</CardTitle>
+                <CardDescription>
+                  View, edit, and delete existing product categories
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoadingCategories ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    Loading categories...
+                  </div>
+                ) : categories.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No categories yet. Create one above.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {categories.map((category) => (
+                      <div
+                        key={category.id}
+                        className="flex items-start justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-medium truncate">
+                            {category.name}
+                          </h4>
+                          {category.description && (
+                            <p className="text-sm text-muted-foreground line-clamp-2">
+                              {category.description}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex gap-2 ml-4 flex-shrink-0">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => editCategory(category)}
+                            title="Edit category"
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                title="Delete category"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle className="flex items-center gap-2">
+                                  <AlertCircle className="h-5 w-5 text-destructive" />
+                                  Delete Category
+                                </AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Are you sure you want to delete the category "
+                                  {category.name}"? This action cannot be
+                                  undone.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <div className="flex gap-3 justify-end">
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => deleteCategory(category.id)}
+                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                >
+                                  Delete
+                                </AlertDialogAction>
+                              </div>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -341,7 +604,12 @@ export default function Settings() {
                 </div>
                 <Switch
                   checked={notificationSettings.emailNotifications}
-                  onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, emailNotifications: checked})}
+                  onCheckedChange={(checked) =>
+                    setNotificationSettings({
+                      ...notificationSettings,
+                      emailNotifications: checked,
+                    })
+                  }
                 />
               </div>
               <div className="flex items-center justify-between">
@@ -353,7 +621,12 @@ export default function Settings() {
                 </div>
                 <Switch
                   checked={notificationSettings.lowStockAlerts}
-                  onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, lowStockAlerts: checked})}
+                  onCheckedChange={(checked) =>
+                    setNotificationSettings({
+                      ...notificationSettings,
+                      lowStockAlerts: checked,
+                    })
+                  }
                 />
               </div>
               <div className="flex items-center justify-between">
@@ -365,7 +638,12 @@ export default function Settings() {
                 </div>
                 <Switch
                   checked={notificationSettings.paymentReminders}
-                  onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, paymentReminders: checked})}
+                  onCheckedChange={(checked) =>
+                    setNotificationSettings({
+                      ...notificationSettings,
+                      paymentReminders: checked,
+                    })
+                  }
                 />
               </div>
               <div className="flex items-center justify-between">
@@ -377,7 +655,12 @@ export default function Settings() {
                 </div>
                 <Switch
                   checked={notificationSettings.systemUpdates}
-                  onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, systemUpdates: checked})}
+                  onCheckedChange={(checked) =>
+                    setNotificationSettings({
+                      ...notificationSettings,
+                      systemUpdates: checked,
+                    })
+                  }
                 />
               </div>
               <div className="flex items-center justify-between">
@@ -389,7 +672,12 @@ export default function Settings() {
                 </div>
                 <Switch
                   checked={notificationSettings.securityAlerts}
-                  onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, securityAlerts: checked})}
+                  onCheckedChange={(checked) =>
+                    setNotificationSettings({
+                      ...notificationSettings,
+                      securityAlerts: checked,
+                    })
+                  }
                 />
               </div>
               <Button onClick={saveNotificationSettings} className="w-full">
@@ -422,16 +710,28 @@ export default function Settings() {
                   </div>
                   <Switch
                     checked={securitySettings.twoFactorAuth}
-                    onCheckedChange={(checked) => setSecuritySettings({...securitySettings, twoFactorAuth: checked})}
+                    onCheckedChange={(checked) =>
+                      setSecuritySettings({
+                        ...securitySettings,
+                        twoFactorAuth: checked,
+                      })
+                    }
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="sessionTimeout">Session Timeout (minutes)</Label>
+                  <Label htmlFor="sessionTimeout">
+                    Session Timeout (minutes)
+                  </Label>
                   <Input
                     id="sessionTimeout"
                     type="number"
                     value={securitySettings.sessionTimeout}
-                    onChange={(e) => setSecuritySettings({...securitySettings, sessionTimeout: parseInt(e.target.value) || 30})}
+                    onChange={(e) =>
+                      setSecuritySettings({
+                        ...securitySettings,
+                        sessionTimeout: parseInt(e.target.value) || 30,
+                      })
+                    }
                   />
                 </div>
                 <div className="space-y-2">
@@ -440,7 +740,12 @@ export default function Settings() {
                     id="maxLoginAttempts"
                     type="number"
                     value={securitySettings.maxLoginAttempts}
-                    onChange={(e) => setSecuritySettings({...securitySettings, maxLoginAttempts: parseInt(e.target.value) || 5})}
+                    onChange={(e) =>
+                      setSecuritySettings({
+                        ...securitySettings,
+                        maxLoginAttempts: parseInt(e.target.value) || 5,
+                      })
+                    }
                   />
                 </div>
                 <Button onClick={saveSecuritySettings} className="w-full">
@@ -456,9 +761,7 @@ export default function Settings() {
                   <Key className="h-5 w-5" />
                   Change Password
                 </CardTitle>
-                <CardDescription>
-                  Update your account password
-                </CardDescription>
+                <CardDescription>Update your account password</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -478,40 +781,63 @@ export default function Settings() {
                     </div>
                   </div>
                 </div>
-                
+
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <Label>Change Password</Label>
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       size="sm"
                       onClick={() => setShowChangePassword(!showChangePassword)}
                     >
-                      {showChangePassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      {showChangePassword ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
                     </Button>
                   </div>
-                  
+
                   {showChangePassword && (
                     <div className="space-y-3">
                       <Input
                         type="password"
                         placeholder="Current password"
                         value={passwordForm.currentPassword}
-                        onChange={(e) => setPasswordForm({...passwordForm, currentPassword: e.target.value})}
+                        onChange={(e) =>
+                          setPasswordForm({
+                            ...passwordForm,
+                            currentPassword: e.target.value,
+                          })
+                        }
                       />
                       <Input
                         type="password"
                         placeholder="New password"
                         value={passwordForm.newPassword}
-                        onChange={(e) => setPasswordForm({...passwordForm, newPassword: e.target.value})}
+                        onChange={(e) =>
+                          setPasswordForm({
+                            ...passwordForm,
+                            newPassword: e.target.value,
+                          })
+                        }
                       />
                       <Input
                         type="password"
                         placeholder="Confirm new password"
                         value={passwordForm.confirmPassword}
-                        onChange={(e) => setPasswordForm({...passwordForm, confirmPassword: e.target.value})}
+                        onChange={(e) =>
+                          setPasswordForm({
+                            ...passwordForm,
+                            confirmPassword: e.target.value,
+                          })
+                        }
                       />
-                      <Button onClick={changePassword} className="w-full" size="sm">
+                      <Button
+                        onClick={changePassword}
+                        className="w-full"
+                        size="sm"
+                      >
                         <Lock className="mr-2 h-4 w-4" />
                         Change Password
                       </Button>
@@ -539,29 +865,37 @@ export default function Settings() {
                 <Avatar className="h-20 w-20">
                   <AvatarImage src={user?.avatar} />
                   <AvatarFallback className="text-lg">
-                    {user?.name.split(' ').map(n => n[0]).join('').toUpperCase() || 'U'}
+                    {user?.name
+                      .split(" ")
+                      .map((n) => n[0])
+                      .join("")
+                      .toUpperCase() || "U"}
                   </AvatarFallback>
                 </Avatar>
                 <div className="space-y-1">
                   <h3 className="text-lg font-semibold">{user?.name}</h3>
                   <p className="text-sm text-muted-foreground">{user?.email}</p>
-                  <p className="text-sm text-muted-foreground">{user?.role.replace('_', ' ')}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {user?.role.replace("_", " ")}
+                  </p>
                 </div>
               </div>
-              
+
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <Label className="text-muted-foreground">User ID</Label>
-                    <p className="font-medium">{user?.id || 'N/A'}</p>
+                    <p className="font-medium">{user?.id || "N/A"}</p>
                   </div>
                   <div>
                     <Label className="text-muted-foreground">Role</Label>
-                    <p className="font-medium capitalize">{user?.role.replace('_', ' ') || 'N/A'}</p>
+                    <p className="font-medium capitalize">
+                      {user?.role.replace("_", " ") || "N/A"}
+                    </p>
                   </div>
                   <div>
                     <Label className="text-muted-foreground">Email</Label>
-                    <p className="font-medium">{user?.email || 'N/A'}</p>
+                    <p className="font-medium">{user?.email || "N/A"}</p>
                   </div>
                   <div>
                     <Label className="text-muted-foreground">Status</Label>
